@@ -1,0 +1,33 @@
+WITH parsed_txns AS (
+    SELECT 
+        sender,
+        CAST(dt AS TIMESTAMP) AS txn_time,
+        amount,
+        ROW_NUMBER() OVER (PARTITION BY sender ORDER BY CAST(dt AS TIMESTAMP)) AS rn
+    FROM transactions
+),
+diff_calc AS (
+    SELECT *,
+        txn_time - LAG(txn_time) OVER (PARTITION BY sender ORDER BY txn_time) AS diff
+    FROM parsed_txns
+),
+grouped AS (
+    SELECT *,
+        SUM(CASE WHEN diff IS NULL OR diff > INTERVAL '1 hour' THEN 1 ELSE 0 END)
+        OVER (PARTITION BY sender ORDER BY txn_time ROWS UNBOUNDED PRECEDING) AS grp
+    FROM diff_calc
+),
+sequences AS (
+    SELECT 
+        sender,
+        MIN(txn_time) AS sequence_start,
+        MAX(txn_time) AS sequence_end,
+        COUNT(*) AS transactions_count,
+        ROUND(SUM(amount), 6) AS transactions_sum
+    FROM grouped
+    GROUP BY sender, grp
+    HAVING COUNT(*) >= 2 AND SUM(amount) >= 150
+)
+SELECT *
+FROM sequences
+ORDER BY sender, sequence_start, sequence_end;
